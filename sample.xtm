@@ -1,0 +1,114 @@
+(sys:load "libs/external/instruments_ext.xtm")
+(sys:load "libs/core/instruments.xtm")
+(define-instrument synth synth_note_c synth_fx)
+(define-sampler piano sampler_note_hermite_c sampler_fx)
+
+(bind-func dsp:[SAMPLE,SAMPLE,i64,i64,SAMPLE*]*
+  (lambda (in time chan dat)
+    (synth in time chan dat)))
+
+(dsp:set! dsp)
+
+;; Simplest pattern
+(play-note (now) synth 60 120 80000)
+
+;; 半音階
+(dotimes (i 13)
+  (play-note (+ (now) (* i 5000)) synth (+ 60 i) 120 8000))
+
+;; Scale
+(let loop ((scale '(0 2 4 5 7 9 11 12))
+           (dur (map (lambda (n) (* n 10000))
+                     '(1 1 1 1 1 1 1 4)))
+           (time 0))
+  (play-note (+ (now) time) synth (+ 60 (car scale)) 120 (car dur))
+  (if (not (null? (cdr scale)))
+      (loop (cdr scale) (cdr dur) (+ time 10000))))
+
+;; cadenza
+(define play-cadenza
+  (lambda (time plist)
+    (map (lambda (p) (play-note time piano p 180 40000)) (car plist))
+    (if (not (null? (cdr plist)))
+        (callback (now) 'play-cadenza (+ time 40000) (cdr plist)))))
+
+(play-cadenza (now) '((41 53 62 65 72) (43 55 64 67 72) (31 43 62 65 67 71) (36 48 60 64 67 72)))
+
+;; my tarai function
+(define scale
+  (lambda (n)
+    (let ((m (modulo n 13)))
+      (+ 60 (list-ref '(0 1 2 3 4 5 6 7 8 9 10 11 12) m)))))
+
+(define scale
+  (lambda (n)
+    (let ((m (modulo n 7)))
+      (+ 60
+         (* 12 (/ (- n m) 7))
+         (list-ref '(0 2 4 5 7 9 11) m)))))
+
+(define play-plist
+  (lambda (time plist)
+    (play-note time piano (scale (car plist)) 180 20000)
+    (if (not (null? (cdr plist)))
+        (callback (now) 'play-plist (+ time 10000) (cdr plist)))))
+
+(play-plist (now) '(0 1 2))
+(play-plist (now) '(10 5 1))
+
+(define (tarai x y z next)
+  (let* ((len (* 3 10000))
+         (t (+ (now) len)))
+    (print "[" x y z "]\n")
+
+    (play-plist t (list x y z))
+
+    (if (<= x y)
+        (callback t next y)
+        (callback t tarai (- x 1) y z
+                  (lambda (nx)
+                    (tarai (- y 1) z x
+                           (lambda (ny)
+                             (tarai (- z 1) x y
+                                    (lambda (nz)
+                                      (tarai nx ny nz next))))))))))
+
+(tarai 10 5 1 println)
+(define (tarai x y z next))
+
+;; if not use memorize or lazy evaluation, out of memory!
+;; (define tarai
+;;   (lambda (time x y z)
+;;     (print "[" x y z "]\n")
+
+;;     (play-plist time (list x y z))
+
+;;     (if (<= x y)
+;;         (callback time println y)
+;;         (callback time tarai (+ time 10000) (tarai (+ time 10000) (- x 1) y z) (tarai (+ time 20000) (- y 1) z x) (tarai (+ time 30000) (- z 1) y z)))))
+;; (tarai (now) 10 5 1)
+
+
+;; load piano
+
+(define parse-salamander-piano
+  (lambda (file-list)
+    (map (lambda (fname)
+           (let ((result (regex:matched fname "^.*([ABCDEFG][#b]?[0-9])v([0-9]+)\.(wav|aif|aiff|ogg)$")))
+             (if (null? result)
+                 (begin (println 'Cannot 'parse 'filename: fname)
+                        #f)
+                 (if (= (string->number (caddr result)) 4)
+                     (list fname
+                           (note-name-to-midi-number (cadr result))
+                           0
+                           0)
+                     #f))))
+         file-list)))
+
+(load-sampler piano
+              "/usr/local/Cellar/extempore/0.53/sampler/SalamanderGrandPianoV2_44.1khz16bit/44.1khz16bit/"
+              0
+              parse-salamander-piano)
+
+(play-note (now) piano (random 40 80) 180 44100)
